@@ -12,6 +12,7 @@ import { basisFacts, ticketDetail } from '../src/app/views/tickets.ts'
 import { threadDetail } from '../src/app/views/threads.ts'
 import { droppedReplies, sourcesStatus } from '../src/app/views/sources.ts'
 import { overview } from '../src/app/views/overview.ts'
+import { Telemetry } from '../src/app/telemetry.ts'
 import { markdown, plain } from '../src/app/views/text.ts'
 import { policyHistory } from '../src/app/settings-history.ts'
 import { KV } from '../src/kv.ts'
@@ -153,7 +154,7 @@ it('does not show a follow-up that reached a ticket as waiting for an Eval, thou
 
 const load = { running: 0, queued: 0 }
 const problems = (host: ReturnType<typeof views>, health: Parameters<typeof overview>[1] = {}) =>
-  overview(host, health, 'v1', load).problems
+  overview(host, health, 'v1', load, undefined, new Telemetry(store).snapshot()).problems
 
 it('lists an Eval past its deadline, and as dsh-superagent\'s own errors only parts no Source or Policy sync reports', () => {
   const host = views()

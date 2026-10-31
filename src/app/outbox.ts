@@ -1,14 +1,16 @@
 /** Reliable outbound message delivery backed by persistent receipts and retried reply effects. */
 import type { OutboundMessage, Outbox as OutboxPort, ReplyStatus } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
+import { LIMITS } from '../limits.ts'
 import { checkedImText } from '../infra/text.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { FAILURES_BEFORE_ERROR, Later, type Effects } from './effects.ts'
 import type { Store } from './store.ts'
+import type { OwedReply } from './store-read.ts'
 
 export interface OutboxHost {
-  readonly store: Pick<Store, 'atomic' | 'receipts'>
-  readonly effects: Pick<Effects, 'enqueue' | 'cancel' | 'handle' | 'idle'>
+  readonly store: Pick<Store, 'atomic' | 'receipts' | 'read'>
+  readonly effects: Pick<Effects, 'enqueue' | 'cancel' | 'handle' | 'idle' | 'retryNow'>
   readonly sources: Pick<SourceRegistry, 'instance' | 'channelAllowed' | 'send'>
   readonly commands: Commands
   paused(): boolean
@@ -31,6 +33,15 @@ export class Outbox implements OutboxPort {
     store.atomic(() => { if (store.receipts.add(message)) effects.enqueue('reply', message.id, {}) })
   }
   status(id: string): ReplyStatus | undefined { return this.host.store.receipts.get(id)?.status }
+  /** Makes pending replies due immediately after a restart and returns every pending reply for startup logging. */
+  reconcile(): OwedReply[] {
+    this.host.effects.retryNow('reply')
+    return this.host.store.read.owedReplies()
+  }
+  /** Pending replies older than `LIMITS.owedReplyAfterMs`, surfaced to the operator as owed. */
+  owed(now = Date.now()): OwedReply[] {
+    return this.host.store.read.owedReplies(new Date(now - LIMITS.owedReplyAfterMs).toISOString())
+  }
   withdraw(id: string): void {
     const { store, effects } = this.host
     store.atomic(() => { if (store.receipts.withdraw(id)) effects.cancel('reply', id) })

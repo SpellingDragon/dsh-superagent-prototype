@@ -75,6 +75,11 @@ export class Effects {
   pending(kind: EffectKind, key?: string): boolean {
     return key === undefined ? !!this.store.db.prepare('SELECT 1 FROM effect WHERE kind = ? LIMIT 1').get(kind) : !!this.store.db.prepare('SELECT 1 FROM effect WHERE kind = ? AND key = ?').get(kind, key)
   }
+  /** Makes every waiting row of `kind` due now, so a restart retries without waiting out the previous backoff; returns the number moved. */
+  retryNow(kind: EffectKind): number {
+    const now = this.now()
+    return Number(this.store.db.prepare('UPDATE effect SET due = ? WHERE kind = ? AND due > ?').run(now, kind, now).changes)
+  }
   /** Drops a queued row by kind and key; if it is already running, that attempt finishes normally. */
   cancel(kind: EffectKind, key: string): void {
     this.store.db.prepare('DELETE FROM effect WHERE kind = ? AND key = ?').run(kind, key)

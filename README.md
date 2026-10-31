@@ -8,6 +8,16 @@ dsh-superagent is a proactive coding agent for one GitHub repository, packaged a
 
 It is also a way of working with an agent: **take as little human attention as possible, and give as much value as possible.** An agent that can act for a whole team can also waste a whole team's attention, so it acts only when asked or when a rule the team wrote allows it, and speaks only when someone must act or can use a result. [docs/000-philosophy.md](docs/000-philosophy.md) explains the principle and what it asks of the operator.
 
+## Design lineage
+
+The failure semantics follow three invariants from [tagent](https://github.com/SpellingDragon/tagent), an event-driven agent runtime:
+
+- constrain behavior at the call boundary, not only at the entrance;
+- treat delivery as an obligation that stays visible and recoverable;
+- move policy from record, to warn, then to enforce.
+
+The runtime remains DSH-owned. tagent's event chain, per-session consumer loop, context folding, plugin ports and tmux execution are not imported.
+
 ## Setup
 
 Setup has many steps, so an agent does it with you. Ask your coding agent:

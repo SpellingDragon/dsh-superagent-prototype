@@ -108,6 +108,7 @@ export interface PanelServer {
   opened: string[]
   dropped: DroppedReply[]
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
+  owed: Extract<Problem, { kind: 'owed' }>['outgoing'][]
 }
 export let server: PanelServer
 
@@ -194,10 +195,13 @@ const overviewView = (): ApiResponse<'GET overview'> => {
         && !name.startsWith('sync:') && name !== 'evals')
         .map(([name, item]) => ({ kind: 'runtime-error' as const, name, detail: item.detail })),
       ...Object.values(server.settings.policy.sources).some(part => part.allowed.length) ? [] : [{ kind: 'no-allowed' as const }],
-      ...server.failing.map(outgoing => ({ kind: 'outgoing' as const, outgoing }))],
+      ...server.failing.map(outgoing => ({ kind: 'outgoing' as const, outgoing })),
+      ...server.owed.map(outgoing => ({ kind: 'owed' as const, outgoing }))],
     person: server.person, executor: { running: 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers, idle: 1 },
     flow: { received: 12, filtered: 2, triggers: 10, judged: 5, accepted: 1, evaluating: 0,
       dropped: server.dropped.filter(item => item.dropped.at >= dayAgo()).length },
+    telemetry: { toolCalls: 12, byTool: { bash: 8, read: 4 }, overCapTurns: 1, maxCallsPerTurn: 9,
+      windowDays: 7, since: '2026-09-16', callCapPerTurn: 8, activation: 'record-only' },
     policyVersion: 'abcdef1234567890',
   }
 }
@@ -247,7 +251,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], owed: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
