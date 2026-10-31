@@ -1,9 +1,11 @@
 /** Overview view: active system problems, tickets awaiting human action, executor load, and 24-hour trigger flow. */
 import { reasonText, ticketStage, type Decision, type Thread } from '../../core/index.ts'
+import { LIMITS } from '../../limits.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SetupProblem } from '../../setup.ts'
 import { anyoneAllowed } from '../../policy.ts'
 import type { Store } from '../store.ts'
+import type { TelemetrySnapshot } from '../telemetry.ts'
 import { awaitingEval, dayAgo, newestFirst, ownersOf, snapshot, threadSummary, type ViewHost } from './records.ts'
 import { sourceHealth, type HealthMap } from './sources.ts'
 import { ticketRow, type ExecutorLoad } from './tickets.ts'
@@ -35,7 +37,8 @@ export function evalsHealth(store: Store, now = Date.now()): Health {
  * Builds the operator overview: active system problems, tickets awaiting human action, executor load, and 24-hour trigger flow.
  * @param setup - Setup problem to surface first (where setup stopped, or a Source paused by setup).
  */
-export function overview(host: ViewHost, health: HealthMap, policyVersionValue: string, load: ExecutorLoad, setup?: SetupProblem) {
+export function overview(host: ViewHost, health: HealthMap, policyVersionValue: string, load: ExecutorLoad, setup: SetupProblem | undefined,
+  telemetry: TelemetrySnapshot) {
   const { store, sources } = host
   const view = snapshot(host)
   const settings = store.settings()
@@ -45,6 +48,10 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   const running = instances.filter(instance => instance.enabled && instance.installed).map(instance => sourceHealth(sources, instance, health))
   // Exclude source-owned and policy-sync health entries so only core runtime errors surface as `runtime-error`.
   const sourceParts = new Set(instances.flatMap(instance => sources.kind(instance.kind)?.health ?? []))
+  const failing = store.read.failingReplies()
+  const failingIds = new Set(failing.map(item => item.id))
+  const owed = store.read.owedReplies(new Date(Date.now() - LIMITS.owedReplyAfterMs).toISOString())
+    .filter(item => !failingIds.has(item.id))
   const problems = [
     ...(setup ? [{ kind: 'setup' as const, ...setup }] : []),
     ...(running.length ? [] : [{ kind: 'no-source' as const }]),
@@ -60,9 +67,11 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
       .map(thread => ({ kind: 'eval-overdue' as const, thread: threadSummary(view, thread) })),
     ...unjudged(store, since).map(({ thread, decision }) => ({ kind: 'eval-unavailable' as const, decisionId: decision.id,
       thread: threadSummary(view, thread), reason: decision.reason, triggerId: decision.triggerIds[0] ?? '' })),
-    ...store.read.failingReplies().map(item => ({ kind: 'outgoing' as const, outgoing: { id: item.id, channel: item.channel,
+    ...failing.map(item => ({ kind: 'outgoing' as const, outgoing: { id: item.id, channel: item.channel,
       text: preview(item.text),
       attempts: item.attempts, error: item.error } })),
+    ...owed.map(item => ({ kind: 'owed' as const, outgoing: { id: item.id, channel: item.channel,
+      text: preview(item.text), attempts: item.attempts, error: item.error, since: item.since } })),
   ]
   const open = store.tickets.open().sort(newestFirst)
   const stats = Object.values(store.read.triggerStats(since))
@@ -74,6 +83,7 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     executor: { ...load, maxWorkers: settings.executor.maxWorkers, idle: open.filter(ticket => ticketStage(ticket).stage === 'idle').length },
     flow: { received, filtered, triggers: received - filtered, judged: judgement.judged, accepted: judgement.accepted,
       evaluating: evaluating.length, dropped: store.read.droppedSince(since) },
+    telemetry,
     policyVersion: policyVersionValue,
   }
 }

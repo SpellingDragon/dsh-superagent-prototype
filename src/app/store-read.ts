@@ -2,6 +2,8 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { Decision, Thread, Trigger } from '../core/index.ts'
 import type { Dropped, Receipt, TimelinePlace } from './store.ts'
+/** A pending reply whose `reply` effect has waited since at or before the observation bound. */
+export interface OwedReply extends Receipt { since: string; attempts: number; error: string }
 
 export function storeReads(db: DatabaseSync) {
   const values = <T>(sql: string, ...parameters: SQLInputValue[]): T[] => db.prepare(sql).all(...parameters).map(row => JSON.parse(String(row.value)) as T)
@@ -70,6 +72,12 @@ export function storeReads(db: DatabaseSync) {
   failingReplies: (): (Receipt & { attempts: number; error: string })[] => db.prepare(`SELECT o.value, e.attempts, e.error FROM effect e
     JOIN outbox o ON o.id = e.key WHERE e.kind = 'reply' AND e.attempts > 0 ORDER BY e.seq`).all()
     .map(row => ({ ...JSON.parse(String(row.value)) as Receipt, attempts: Number(row.attempts), error: String(row.error) })),
+  /** Pending messages whose `reply` effect has waited since at or before `since`, oldest first; every pending reply without a bound. */
+  owedReplies: (since?: string): OwedReply[] => db.prepare(`SELECT o.value, e.since, e.attempts, e.error FROM outbox o
+    JOIN effect e ON e.kind = 'reply' AND e.key = o.id
+    WHERE o.value ->> '$.status' = 'pending' ${since === undefined ? '' : 'AND e.since <= ?'} ORDER BY e.seq`)
+    .all(...since === undefined ? [] : [since])
+    .map(row => ({ ...JSON.parse(String(row.value)) as Receipt, since: String(row.since), attempts: Number(row.attempts), error: String(row.error) })),
   droppedReplies: (limit = 20): Dropped[] =>
     values('SELECT value FROM outbox WHERE dropped IS NOT NULL ORDER BY dropped DESC LIMIT ?', limit),
   droppedSince: (since: string): number => Number(db.prepare('SELECT COUNT(*) AS n FROM outbox WHERE dropped >= ?').get(since)?.n ?? 0),

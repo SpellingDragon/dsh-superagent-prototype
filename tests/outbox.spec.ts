@@ -40,3 +40,53 @@ it('keeps a message for a Source that is not installed waiting, and sends it onc
   await at(5000)
   expect([h.runtime.outbox.status('waiting'), sent.map(message => message.id)]).toEqual(['sent', ['waiting']])
 })
+
+it('retries a reply left pending by the previous process at startup', async () => {
+  const seeded = await startRuntime(store => {
+    const channel = feishu('9', 'x').channel!
+    const message = { id: 'restart-seeded', channel, text: 'Done', kind: 'reply' as const }
+    store.db.prepare('INSERT INTO outbox (id, value) VALUES (?, ?)').run(message.id, JSON.stringify({ ...message, status: 'pending' }))
+    store.db.prepare(`INSERT INTO effect (kind, key, value, seq, generation, attempts, error, due, since)
+      VALUES ('reply', ?, '{}', 1, 0, 0, '', ?, ?)`)
+      .run(message.id, Date.now() + 3_600_000, new Date(Date.now() - 600_000).toISOString())
+  })
+  try {
+    // Sources register after Runtime startup; once registered, the reconciled reply can go out.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5_000 })
+    try {
+      await seeded.runtime.pump()
+      await seeded.runtime.sendReplies()
+    } finally { vi.useRealTimers() }
+    expect(seeded.runtime.outbox.status('restart-seeded')).toBe('sent')
+  } finally { await seeded.stop() }
+})
+
+it('returns pending replies as owed and makes them due', async () => {
+  h.runtime.outbox.send({ id: 'restart-owed', channel: { source: 'probe', thread: 'probe:1', address: {} }, text: 'Done', kind: 'reply' })
+  await h.runtime.sendReplies()
+  expect(h.runtime.outbox.status('restart-owed')).toBe('pending')
+  const owed = h.runtime.outbox.reconcile()
+  expect(owed.map(item => item.id)).toContain('restart-owed')
+  const row = h.runtime.store.db.prepare("SELECT due FROM effect WHERE kind = 'reply' AND key = ?").get('restart-owed') as { due: number }
+  expect(row.due).toBeLessThanOrEqual(Date.now())
+})
+
+it('does not report a sent reply as owed', async () => {
+  h.runtime.outbox.send({ id: 'already-sent', channel: feishu('1', 'x').channel!, text: 'Done', kind: 'reply' })
+  await h.runtime.sendReplies()
+  expect(h.runtime.outbox.status('already-sent')).toBe('sent')
+  expect(h.runtime.outbox.reconcile().map(item => item.id)).not.toContain('already-sent')
+})
+
+it('does not show a fresh pending reply in overview', async () => {
+  h.runtime.outbox.send({ id: 'fresh-pending', channel: { source: 'probe', thread: 'probe:1', address: {} }, text: 'Done', kind: 'reply' })
+  await h.runtime.sendReplies()
+  const fresh = await h.api('GET', 'overview')
+  expect((fresh.body.problems as { kind: string }[]).some(problem => problem.kind === 'owed')).toBe(false)
+  vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 120_000 })
+  try {
+    const later = await h.api('GET', 'overview')
+    expect((later.body.problems as { kind: string; outgoing: { id: string } }[])
+      .some(problem => problem.kind === 'owed' && problem.outgoing.id === 'fresh-pending')).toBe(true)
+  } finally { vi.useRealTimers() }
+})

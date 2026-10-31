@@ -55,6 +55,9 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
     case 'outgoing': return row(t('problemReply', { source: valueLabel(t, 'source', problem.outgoing.channel.source),
       attempts: problem.outgoing.attempts }),
       raw(problem.outgoing.error), undefined)
+    case 'owed': return row(t('problemOwed', { source: valueLabel(t, 'source', problem.outgoing.channel.source),
+      minutes: Math.max(1, Math.round((Date.now() - Date.parse(problem.outgoing.since)) / 60_000)) }),
+      raw(problem.outgoing.error || undefined), undefined)
   }
 }
 
@@ -89,6 +92,14 @@ export function OverviewPage() {
         {stat(t('flowJudgedLabel'), data.flow.judged)}
         {stat(t('flowAcceptedLabel'), data.flow.accepted, { page: 'eval', query: { window: '24h' } })}
         {data.flow.dropped > 0 && stat(t('flowDroppedLabel'), data.flow.dropped, { page: 'source' })}
+      </div>
+    </Section>
+    <Section title={t('telemetryTitle')}>
+      <Hint>{t('telemetryRecordOnly', { cap: data.telemetry.callCapPerTurn, days: data.telemetry.windowDays })}</Hint>
+      <div className="dt-stats">
+        {stat(t('telemetryToolCalls'), data.telemetry.toolCalls)}
+        {stat(t('telemetryOverCapTurns'), data.telemetry.overCapTurns)}
+        {stat(t('telemetryMaxCalls'), data.telemetry.maxCallsPerTurn)}
       </div>
     </Section>
     <Section title={t('term.executor')} action={more({ page: 'execution' })}>
